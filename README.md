@@ -28,12 +28,12 @@ void loop() {
     ESP32_SDI12::Status res = sdi12.measure(DEVICE_ADDRESS, values, sizeof(values));
     
     // Error handling
-    if(res == ESP32_SDI12::SDI12_OK){
-        // Do what you want with values here
-    } else {
+    if(res != ESP32_SDI12::SDI12_OK){
         // Some error occured, handle it here
         Serial.printf("Error: %d\n", res);
     }
+    
+    // Do what you want with values here
 
     delay(15000); // Do this measurement every 15 seconds
 }
