@@ -7,6 +7,15 @@ ESP32_SDI12::ESP32_SDI12(int8_t pin){
 
 ESP32_SDI12::~ESP32_SDI12() = default;
 
+/**
+ * Start SDI-12 service.
+ *
+ * @details This method initialises and instance of the ESPSoftwareSerial library with
+ * the required settings for SDI-12 communications. This could be done in the
+ * constructor but this gives further flexibility to the user.
+ *
+ * @see https://github.com/plerup/espsoftwareserial
+ */
 void ESP32_SDI12::begin() {
     // Pass baud rate (1200 as per the SDI-12 specsheet) and specified SDI-12
     // pin to software serial service.
@@ -24,20 +33,31 @@ void ESP32_SDI12::begin() {
     digitalWrite(sdi12_pin, LOW);
 }
 
-/*
+/**
  * Main function to deal with SDI12 commands and responses.
- * Structure is as follows.
  *
+ * @details A sensor command is created based on the passed command request. Optionally,
+ * the user can pass in a position or newAddress for commands that requires
+ * these additional variables.
+ *
+ * @note SDI-12 structure is as follows.
  * Break (12 ms)
-      │                          380 - 810 ms
-      ▼      Command              Response
-    ┌───┐  ┌─┐ ┌─┐ ┌─┐           ┌─┐ ┌─┐ ┌─┐
-    │   │  │ │ │ │ │ │           │ │ │ │ │ │
-────┘   └──┘ └─┘ └─┘ └───────────┘ └─┘ └─┘ └─
-          ▲               Max
-          │          ◄───15 ms───►
-      Marking (8.3 ms)
+ *       │                          380 - 810 ms
+ *       ▼      Command              Response
+ *     ┌───┐  ┌─┐ ┌─┐ ┌─┐           ┌─┐ ┌─┐ ┌─┐
+ *     │   │  │ │ │ │ │ │           │ │ │ │ │ │
+ * ────┘   └──┘ └─┘ └─┘ └───────────┘ └─┘ └─┘ └─
+ *           ▲               Max
+ *           │          ◄───15 ms───►
+ *       Marking (8.3 ms)
  *
+ * @param address The sensor SDI-12 address.
+ * @param cmd Command found in Commands enum.
+ * @param position As a maximum of 75 bytes can be transmitted in a single
+ * response, the position gives the ability to send multiple identical requests
+ * while adjusting the position 0 - 9 to get all data.
+ * @param newAddress If changing address this will be the sensors new address.
+ * @return Status code (ESP32_SDI12::Status).
  */
 ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
                                              Commands cmd,
@@ -136,15 +156,35 @@ ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
     return SDI12_OK;
 }
 
-ESP32_SDI12::Status ESP32_SDI12::ackActive(uint8_t port) {
+/**
+ * Executes the SDI-12 attention command to see if a sensor is available on a
+ * particular address.
+ *
+ * @warning Not all sensors respond to this command. Use information command
+ * if unsure.
+ *
+ * @param address SDI-12 sensor address
+ * @return Status code (ESP32_SDI12::Status).
+ */
+ESP32_SDI12::Status ESP32_SDI12::ackActive(uint8_t address) {
 
-    if(validAddress(port) != SDI12_OK){
+    if(validAddress(address) != SDI12_OK){
         return SDI12_INVALID_ADDR;
     }
 
-    return querySensor(port, SDI12_Attention);
+    return querySensor(address, SDI12_Attention);
 }
 
+/**
+ * Get SDI-12 sensor information.
+ *
+ * @breif Pass in a reference to a Sensor struct to be populated (when
+ * successful).
+ *
+ * @param address SDI-12 sensor address.
+ * @param sensor SDI-12 Sensor struct to be populated.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::sensorInfo(uint8_t address,
                                             Sensor* sensor) {
 
@@ -167,6 +207,16 @@ ESP32_SDI12::Status ESP32_SDI12::sensorInfo(uint8_t address,
     return SDI12_OK;
 }
 
+/**
+ * Get SDI-12 sensor information.
+ *
+ * @breif Used when the ackActive() command is not supported by the sensor.
+ * This method will return SDI12_OK if a device is found but will not populate
+ * a Sensor struct.
+ *
+ * @param address SDI12 sensor address.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::sensorInfo(uint8_t address) {
 
     if(validAddress(address) != SDI12_OK){
@@ -181,10 +231,25 @@ ESP32_SDI12::Status ESP32_SDI12::sensorInfo(uint8_t address) {
     return SDI12_OK;
 }
 
+/**
+ * Checks if the supplied address is a valid SDI-12 address.
+ *
+ * @param address SDI-12 sensor address.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::validAddress(uint8_t address) {
     return (address <= MAX_N_DEVICES) ? SDI12_OK : SDI12_INVALID_ADDR;
 }
 
+/**
+ * Obtains an overview of sensors on the SDI-12 bus.
+ *
+ * @breif Populates a Sensors struct with sensors as they are found on
+ * the SDI-12 bus.
+ *
+ * @param sensors Sensors struct to be populated.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::sensorsOnBus(Sensors* sensors) {
 
     uint8_t n_sensors = 0;
@@ -213,6 +278,13 @@ ESP32_SDI12::Status ESP32_SDI12::sensorsOnBus(Sensors* sensors) {
     return SDI12_OK;
 }
 
+/**
+ * Change a devices SDI-12 address.
+ *
+ * @param address Sensors current SDI-12 address.
+ * @param newAddress Proposed SDI-12 sensor address.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::changeAddress(uint8_t address,
                                                uint8_t newAddress) {
     #ifdef SDI12_SERIAL_DEBUG
@@ -257,6 +329,20 @@ ESP32_SDI12::Status ESP32_SDI12::changeAddress(uint8_t address,
     return res;
 }
 
+/**
+ * Request a SDI-12 sensor to take a measurement.
+ *
+ * @breif If successful the Measure struct will contain all variables needed
+ * to submit a subsequent data command (as required by the SDI-12 spec).
+ *
+ * @note This method does not return sensor data, rather information regarding
+ * how long it will take for the sensor to have data ready to send and how many
+ * values can be expected.
+ *
+ * @param address Sensor SDI-12 address.
+ * @param measure Measure struct to be populated (if successful)
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::requestMeasure(uint8_t address,
                                                 Measure* measure){
     Status res = querySensor(address, SDI12_Measure, 0, 0);
@@ -287,6 +373,20 @@ ESP32_SDI12::Status ESP32_SDI12::requestMeasure(uint8_t address,
     return res;
 }
 
+/**
+ * Request data from SDI-12 sensor (after measure command).
+ *
+ * @breif Used to request data from a sensor after a sensor measure command has
+ * been executed.
+ *
+ * @note Multiples of this request may be needed to get all values from a sensor
+ * this can be handled by incrementing the position variable from 0 through to
+ * 9 with each subsequent request.
+ *
+ * @param address Sensor SDI-12 address.
+ * @param position Position in data command interactions.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::requestData(uint8_t address,
                                              uint8_t position) {
     Status res = querySensor(address, SDI12_Data, position, 0);
@@ -302,7 +402,19 @@ ESP32_SDI12::Status ESP32_SDI12::requestData(uint8_t address,
     return res;
 }
 
-
+/**
+ * Ask SDI-12 sensor to take a measurement and return all values.
+ *
+ * @breif Combines the requestMeasure() and requestData() commands to ask a
+ * sensor to take any measurements and wait for a response then return all
+ * these data as floats to the user. This will handle multiple data commands
+ * and only return when all values have been received.
+ *
+ * @param address Sensor SDI-12 address.
+ * @param values User supplied buffer to hold returned measurement values.
+ * @param n_values Number of values in user supplied buffer.
+ * @return Status code (ESP32_SDI12::Status).
+ */
 ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
                                          float* values,
                                          uint16_t n_values){
@@ -363,6 +475,11 @@ ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
 
 /* DEBUG methods below */
 #ifdef SDI12_SERIAL_DEBUG
+/**
+ * Helper function to display sensor information as Serial output.
+ *
+ * @param sensor Sensor struct to display.
+ */
 void ESP32_SDI12::sensor_debug(Sensor* sensor){
 
     Serial.printf("=== SDI12 sensor ===\n");

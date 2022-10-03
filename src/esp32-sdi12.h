@@ -84,9 +84,9 @@ public:
     int8_t sdi12_pin = -1;
 
 private:
-    Status querySensor(uint8_t port, Commands cmd, uint8_t position = 0,
+    Status querySensor(uint8_t address, Commands cmd, uint8_t position = 0,
                        uint8_t newAddress = 0);
-    static Status validAddress(uint8_t port);
+    static Status validAddress(uint8_t address);
     Status requestMeasure(uint8_t address, Measure* measure);
     Status requestData(uint8_t address, uint8_t position);
 
