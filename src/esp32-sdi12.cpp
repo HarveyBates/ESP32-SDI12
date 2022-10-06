@@ -127,7 +127,7 @@ ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
 
     pinMode(D0, OUTPUT); // Set pin to OUTPUT mode before break and marking
 
-    // Break (12 ms) put signal HIGh
+    // Break (12 ms) put signal HIGH
     digitalWrite(D0, HIGH);
     delay(12);
 

@@ -17,11 +17,11 @@ void loop() {
     // Measure on address 1
     // Float response will be inserted into values buffer
     ESP32_SDI12::Status res = sdi12.measure(1, values, sizeof(values));
-    if(res == ESP32_SDI12::SDI12_OK){
-        Serial.printf("Success: %d\n", res);
-    } else {
+    if(res != ESP32_SDI12::SDI12_OK){
         Serial.printf("Error: %d\n", res);
     }
+
+    // Do something with the data here...
 
     delay(15000); // Do this measurement every 15 seconds
 }
