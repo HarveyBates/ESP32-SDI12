@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "esp32-sdi12.h"
 
 ESP32_SDI12::ESP32_SDI12(int8_t pin){
@@ -25,12 +26,68 @@ void ESP32_SDI12::begin() {
     // Valid GPIO pin will be checked by SoftwareSerial
     uart.begin(SDI12_BAUD, SWSERIAL_7E1, sdi12_pin, sdi12_pin, true);
 
-    // As the SDI-12 communication operates in halve duplex mode (there is no
+    // If the pull-up is enabled during the command/response cycle, some
+    // SDI-12 sensors do not work. We found the Meter Atmos41 failed in
+    // this configuration.
+    uart.enableRxGPIOPullup(false);
+
+    // As the SDI-12 communication operates in half-duplex mode (there is no
     // separate RX and TX lines) the interrupt on TX is turned off.
     uart.enableIntTx(false);
 
     // Placing the pin in a low state seems to help stability on startup.
     digitalWrite(sdi12_pin, LOW);
+}
+
+/**
+ * Waits up to timeout ms for a character to appear in the UART.
+ *
+ * @param timeout the number of milliseconds to wait before timing out.
+ * @return SDI12_OK if a character appears before the timeout, otherwise SDI12_TIMEOUT.
+ */
+ESP32_SDI12::Status ESP32_SDI12::waitForChar(uint32_t timeout) {
+    uint32_t start = millis();
+    while (millis() - start < timeout && ! uart.available());
+#ifdef SDI12_SERIAL_DEBUG
+    uint32_t end = millis();
+    Serial.printf("Delta from start of read: %lu ms, UART available = %d\n", (end - start), uart.available());
+#endif
+
+    return uart.available() > 0 ? SDI12_OK : SDI12_TIMEOUT;
+}
+
+/**
+ * Reads a line ending in newline from the UART into msg_buf. This method assumes data
+ * is available on the UART.
+ *
+ * Trailing whitespace is removed and msg_buf is guaranteed to be
+ * null-terminated.
+ *
+ * @return The length of the string excluding any trailing whitespace that was
+ * removed and excluding the terminating null character. That is, the string "X"
+ * returns 1.
+ */
+size_t ESP32_SDI12::readUntilCRLF() {
+    memset(msg_buf, 0, sizeof(msg_buf));
+    size_t len = uart.readBytesUntil('\n', msg_buf, MAX_RES_SIZE);
+
+    // Strip trailing whitespace. msg_buf + len would point to the trailing null
+    // so subtract one from that to get to the last character.
+    char *p = msg_buf + len - 1;
+    while (p > msg_buf && *p != 0 && *p < ' ') {
+        *p = 0;
+        p--;
+    }
+
+    // Why 1 is added here: imagine the string is "X"; this means p == msg_buf but the string
+    // length is 1, not 0.
+    len = p - msg_buf + 1;
+
+#ifdef SDI12_SERIAL_DEBUG
+    Serial.printf("Read line: [%s], len = %lu\n", msg_buf, len);
+#endif
+
+    return len;
 }
 
 /**
@@ -125,36 +182,38 @@ ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
 
     uart.enableRx(false); // Disable interrupts on RX
 
-    pinMode(D0, OUTPUT); // Set pin to OUTPUT mode before break and marking
+    pinMode(sdi12_pin, OUTPUT); // Set pin to OUTPUT mode before break and marking
 
     // Break (12 ms) put signal HIGH
-    digitalWrite(D0, HIGH);
+    digitalWrite(sdi12_pin, HIGH);
     delay(12);
 
     // Marking (at least 8.3 ms) pull signal LOW
-    digitalWrite(D0, LOW);
+    digitalWrite(sdi12_pin, LOW);
     delay(9);
 
     // Send command after break and marking to sensor
     uart.write(sensor_cmd);
 
     // Receive message from sensor
-    uint8_t index = 0; // Response length tracker
-    uart.enableTx(false); // EnablesRX and sets sdi12_pin to pull up
-    delay(1000); // Wait for reply TODO check if length can be shortened
+    uart.enableTx(false); // Enables RX mode
 
-    if (uart.available()) {
-        if(response){
-            while (uart.available() && index < sizeof(msg_buf)) {
-                msg_buf[index++] = (char)uart.read(); // Save response into buffer
-            }
-        }
-    } else return SDI12_TIMEOUT;
+    Status res = waitForChar();
+    if (res != SDI12_OK) {
+        return res;
+    }
 
-    digitalWrite(D0, LOW);
+    if (response) {
+        // readUntilCRLF leaves the string read from the UART in msg_buf with
+        // trailing whitespace removed.
+        readUntilCRLF();
+    }
+
+    digitalWrite(sdi12_pin, LOW);
 
     return SDI12_OK;
 }
+
 
 /**
  * Executes the SDI-12 attention command to see if a sensor is available on a
@@ -252,15 +311,14 @@ ESP32_SDI12::Status ESP32_SDI12::validAddress(uint8_t address) {
  */
 ESP32_SDI12::Status ESP32_SDI12::sensorsOnBus(Sensors* sensors) {
 
-    uint8_t n_sensors = 0;
-    for(uint8_t address = 0; address < 9; address++) {
-        if(querySensor(address, SDI12_Information) == SDI12_OK){
-            memcpy(&sensors->sensor[n_sensors], msg_buf, strlen(msg_buf));
-            sensors->count = n_sensors;
+    sensors->count = 0;
+    for (uint8_t address = 0; address <= 9; address++) {
+        if (querySensor(address, SDI12_Information) == SDI12_OK) {
+            memcpy(&sensors->sensor[sensors->count], msg_buf, strlen(msg_buf));
             #ifdef SDI12_SERIAL_DEBUG
-                sensor_debug(&sensors->sensor[n_sensors]);
+                sensor_debug(&sensors->sensor[sensors->count]);
             #endif // SDI12_SERIAL_DEBUG
-            n_sensors++;
+            sensors->count++;
         } else {
             #ifdef SDI12_SERIAL_DEBUG
                 Serial.printf("No sensor found on address: %d\n", address);
@@ -268,11 +326,13 @@ ESP32_SDI12::Status ESP32_SDI12::sensorsOnBus(Sensors* sensors) {
         }
     }
 
-    if(n_sensors == 0) return SDI12_SENSOR_NOT_FOUND;
+    if (sensors->count == 0) {
+        return SDI12_SENSOR_NOT_FOUND;
+    }
 
     #ifdef SDI12_SERIAL_DEBUG
         Serial.printf("=== Sensor scan complete ===\n");
-        Serial.printf("\t%d SDI12 sensor(s) found.\n", n_sensors);
+        Serial.printf("\t%d SDI12 sensor(s) found.\n", sensors->count);
     #endif // SDI12_SERIAL_DEBUG
 
     return SDI12_OK;
@@ -321,7 +381,7 @@ ESP32_SDI12::Status ESP32_SDI12::changeAddress(uint8_t address,
     res = querySensor(address, SDI12_Change_Address, 0, newAddress);
 
     #ifdef SDI12_SERIAL_DEBUG
-        if(res == SDI12_OK){
+        if (res == SDI12_OK) {
             Serial.printf("Address changed from %d to %d\n", address, newAddress);
         }
     #endif // SDI12_SERIAL_DEBUG
@@ -344,33 +404,45 @@ ESP32_SDI12::Status ESP32_SDI12::changeAddress(uint8_t address,
  * @return Status code (ESP32_SDI12::Status).
  */
 ESP32_SDI12::Status ESP32_SDI12::requestMeasure(uint8_t address,
-                                                Measure* measure){
+                                                Measure* measure) {
     Status res = querySensor(address, SDI12_Measure, 0, 0);
 
-    #ifdef SDI12_SERIAL_DEBUG
-        if(res != SDI12_OK){
-            Serial.printf("Error requesting sensor measurement (Error = %d)\n",
-                      res);
-        } else {
-            Serial.printf("Successfully queued measurement on address: %d\n",
-                      address);
+#ifdef SDI12_SERIAL_DEBUG
+    if(res != SDI12_OK){
+        Serial.printf("Error requesting sensor measurement (Error = %d)\n", res);
+        return res;
+    } else {
+        Serial.printf("Successfully queued measurement on address: %d\n", address);
+    }
+#endif // SDI12_SERIAL_DEBUG
 
-            // Device address that requestMeasure command was issued on
-            measure->address = msg_buf[0] - '0';
+    // Device address that requestMeasure command was issued on
+    measure->address = msg_buf[0] - '0';
 
-            // Delay time before data is ready in seconds
-            char delay_time_buf[3];
-            for(uint8_t i = 1; i < 4; i++){
-               delay_time_buf[i-1] = msg_buf[i];
-            }
-            measure->delay_time = strtol(delay_time_buf, nullptr, 10);
+    // Delay time before data is ready in seconds
+    char delay_time_buf[4];
+    for(uint8_t i = 1; i < 4; i++){
+       delay_time_buf[i-1] = msg_buf[i];
+       delay_time_buf[i] = 0;
+    }
+    measure->delay_time = strtol(delay_time_buf, nullptr, 10);
 
-            // Expected number of values in response
-            measure->n_values = msg_buf[4] - '0';
+    // Expected number of values in response
+    measure->n_values = msg_buf[4] - '0';
+
+    // A sensor *should* send a service request string when it has asked for a delay of > 0
+    // seconds. We have at least one sensor that does not always do this so don't assume
+    // it's coming, but read and discard it if it does.
+    if (measure->delay_time > 0) {
+        waitForChar(measure->delay_time * 1000);
+        if (uart.available() > 0) {
+            // This should be the service request, because no data commands have been
+            // issued yet.
+            readUntilCRLF();
         }
-    #endif // SDI12_SERIAL_DEBUG
+    }
 
-    return res;
+    return SDI12_OK;
 }
 
 /**
@@ -412,36 +484,38 @@ ESP32_SDI12::Status ESP32_SDI12::requestData(uint8_t address,
  *
  * @param address Sensor SDI-12 address.
  * @param values User supplied buffer to hold returned measurement values.
- * @param n_values Number of values in user supplied buffer.
+ * @param max_values Number of values in user supplied buffer.
+ * @param num_values The number of values read back from the sensor.
  * @return Status code (ESP32_SDI12::Status).
  */
 ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
                                          float* values,
-                                         uint16_t n_values){
+                                         uint8_t max_values,
+                                         uint8_t* num_values) {
 
-    // Request a new measurement
-    Measure measure{};
+    Measure measure;
+
+    // Request a new measurement. This call parses the response to the measure
+    // command, delays as necessary and reads the attention sequence. Upon
+    // return the data commands can be issued immediately.
     Status res = requestMeasure(address, &measure);
-    if(res != SDI12_OK){
+    if (res != SDI12_OK) {
         return res;
     }
 
-    // Make sure the number of expected return values is greater than
-    if(measure.n_values >= n_values){
+    // Tell the caller they did not provide enough space for the measurements.
+    if (measure.n_values >= max_values) {
         return SDI12_BUF_OVERFLOW;
     }
-
-    // Delay based on sensors requested delay (converted to seconds)
-    delay(measure.delay_time * 1000);
 
     uint8_t parsed_values = 0; // Number of values successfully parsed
     // Position in the data command request (multiple calls may be needed to
     // get all values from a sensor).
     uint8_t position = 0;
-    while(parsed_values < measure.n_values){
+    while (parsed_values < measure.n_values) {
         // Request data as it should be ready to be read now
         res = requestData(address, position);
-        if(res != SDI12_OK){
+        if (res != SDI12_OK) {
             return res;
         }
 
@@ -453,7 +527,7 @@ ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
         float value;
         // Extract the values from the message buffer and put into user
         // supplied buffer
-        for(uint16_t i = 0; i < n_values; i++){
+        for (uint16_t i = 0; i < max_values; i++) {
             value = strtof(msg_ptr, &next_msg_ptr);
             if(msg_ptr == next_msg_ptr){
                 break;
@@ -468,6 +542,10 @@ ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
         // Increment the position in the data command to get more measurements
         // until all values hav been received
         position++;
+    }
+
+    if (num_values != nullptr) {
+        *num_values = measure.n_values;
     }
 
     return res;

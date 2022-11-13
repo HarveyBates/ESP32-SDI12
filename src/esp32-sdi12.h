@@ -33,9 +33,9 @@ private:
     static constexpr int8_t MAX_RES_SIZE        =       75;
 
     // Message buffer for the command
-    char sensor_cmd[MAX_CMD_SIZE] = {0};
+    char sensor_cmd[MAX_CMD_SIZE+1] = {0};
     // Message buffer for response
-    char msg_buf[MAX_RES_SIZE] = {0};
+    char msg_buf[MAX_RES_SIZE+1] = {0};
 
     // List of available SDI-12 commands
     enum Commands {
@@ -126,18 +126,21 @@ public:
     Status sensorsOnBus(Sensors* sensors);
     Status changeAddress(uint8_t address,
                          uint8_t newAddress);
-    Status measure(uint8_t address, float* values, uint16_t n_values);
+    Status measure(uint8_t address, float* values, uint8_t max_values, uint8_t* num_values);
 
     // Default SDI-12 pin (should error if uninitialized as
     // `SDI12_INVALID_ADDR`)
     int8_t sdi12_pin = -1;
 
 private:
+    Status waitForChar(uint32_t timeout = 1000);
     Status querySensor(uint8_t address, Commands cmd, uint8_t position = 0,
                        uint8_t newAddress = 0);
     static Status validAddress(uint8_t address);
     Status requestMeasure(uint8_t address, Measure* measure);
     Status requestData(uint8_t address, uint8_t position);
+
+    size_t readUntilCRLF(void);
 
 #ifdef SDI12_SERIAL_DEBUG
     // Debug message that outputs sensor information over a serial connection
