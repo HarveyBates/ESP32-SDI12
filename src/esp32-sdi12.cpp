@@ -29,7 +29,7 @@ void ESP32_SDI12::begin() {
     // If the pull-up is enabled during the command/response cycle, some
     // SDI-12 sensors do not work. We found the Meter Atmos41 failed in
     // this configuration.
-    uart.enableRxGPIOPullup(false);
+    uart.enableRxGPIOPullUp(false);
 
     // As the SDI-12 communication operates in half-duplex mode (there is no
     // separate RX and TX lines) the interrupt on TX is turned off.
