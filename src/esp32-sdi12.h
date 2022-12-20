@@ -4,7 +4,7 @@
 #include "SoftwareSerial.h"
 
 // Optional define to display SDI-12 serial debug output
-// #define SDI12_SERIAL_DEBUG
+#define SDI12_SERIAL_DEBUG
 
 class ESP32_SDI12 {
 private:
@@ -118,7 +118,8 @@ public:
     };
 
     explicit ESP32_SDI12(int8_t pin);
-    ~ESP32_SDI12();
+    ~ESP32_SDI12() = default;
+
     void begin();
     Status ackActive(uint8_t address);
     Status sensorInfo(uint8_t address, Sensor* sensor);
@@ -126,21 +127,22 @@ public:
     Status sensorsOnBus(Sensors* sensors);
     Status changeAddress(uint8_t address,
                          uint8_t newAddress);
-    Status measure(uint8_t address, float* values, uint8_t max_values, uint8_t* num_values);
+    Status measure(uint8_t address, float* values, size_t max_values,
+                   uint8_t* num_returned_values);
 
     // Default SDI-12 pin (should error if uninitialized as
     // `SDI12_INVALID_ADDR`)
     int8_t sdi12_pin = -1;
 
 private:
-    Status waitForChar(uint32_t timeout = 1000);
+    Status waitForResponse(uint32_t timeout = 1000);
     Status querySensor(uint8_t address, Commands cmd, uint8_t position = 0,
                        uint8_t newAddress = 0);
     static Status validAddress(uint8_t address);
     Status requestMeasure(uint8_t address, Measure* measure);
     Status requestData(uint8_t address, uint8_t position);
 
-    size_t readUntilCRLF(void);
+    size_t readUntilCRLF();
 
 #ifdef SDI12_SERIAL_DEBUG
     // Debug message that outputs sensor information over a serial connection

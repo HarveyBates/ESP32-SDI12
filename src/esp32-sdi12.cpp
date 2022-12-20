@@ -1,15 +1,22 @@
 #include <Arduino.h>
 #include "esp32-sdi12.h"
 
+/**
+ * @brief Constructor for ESP32_SDI12 object.
+ *
+ * Takes a single argument referencing a pin that is attached to the SDI-12
+ * data line. This should be called before the setup() function under normal
+ * operation.
+ *
+ * @param pin SDI-12 data pin (single pin all SDI-12 devices are connected to.
+ */
 ESP32_SDI12::ESP32_SDI12(int8_t pin){
     // Set the SDI12 pin definition to a variable for later use.
     ESP32_SDI12::sdi12_pin = pin;
 }
 
-ESP32_SDI12::~ESP32_SDI12() = default;
-
 /**
- * Start SDI-12 service.
+ * @brief Start SDI-12 service.
  *
  * @details This method initialises and instance of the ESPSoftwareSerial library with
  * the required settings for SDI-12 communications. This could be done in the
@@ -40,58 +47,61 @@ void ESP32_SDI12::begin() {
 }
 
 /**
- * Waits up to timeout ms for a character to appear in the UART.
+ *
+ * @brief Waits for a response from a SDI-12 device.
+ *
+ * Wait for a character to appear over UART before continuing. Timeout will
+ * depend on a sensors response to a measure command. For example, if a
+ * measure command is send, the preceding response should be ttt where ttt
+ * represents the time in seconds until the device will be ready to send data.
+ *
+ * @see SDI-12 specification page 19.
  *
  * @param timeout the number of milliseconds to wait before timing out.
- * @return SDI12_OK if a character appears before the timeout, otherwise SDI12_TIMEOUT.
+ * @return SDI12_OK if a character appears before the timeout,
+ * otherwise SDI12_TIMEOUT.
  */
-ESP32_SDI12::Status ESP32_SDI12::waitForChar(uint32_t timeout) {
+ESP32_SDI12::Status ESP32_SDI12::waitForResponse(uint32_t timeout) {
+
     uint32_t start = millis();
-    while (millis() - start < timeout && ! uart.available());
-#ifdef SDI12_SERIAL_DEBUG
-    uint32_t end = millis();
-    Serial.printf("Delta from start of read: %lu ms, UART available = %d\n", (end - start), uart.available());
-#endif
+    while (millis() - start < timeout && !uart.available()) {
+        delay(1);
+    }
+
+    #ifdef SDI12_SERIAL_DEBUG
+        uint32_t end = millis();
+        Serial.printf("Time elapsed: %u ms\n", end - start);
+        if(!uart.available()){
+            Serial.printf("No response was found before timeout\n");
+        }
+    #endif
 
     return uart.available() > 0 ? SDI12_OK : SDI12_TIMEOUT;
 }
 
 /**
- * Reads a line ending in newline from the UART into msg_buf. This method assumes data
- * is available on the UART.
+ * @brief Passes a response into msg_buf.
  *
- * Trailing whitespace is removed and msg_buf is guaranteed to be
- * null-terminated.
+ * This method assumes data is available on the UART.
  *
- * @return The length of the string excluding any trailing whitespace that was
- * removed and excluding the terminating null character. That is, the string "X"
- * returns 1.
+ * @return The length of the message. If 0 there was no response.
  */
 size_t ESP32_SDI12::readUntilCRLF() {
+    // Reset the message buffer
     memset(msg_buf, 0, sizeof(msg_buf));
-    size_t len = uart.readBytesUntil('\n', msg_buf, MAX_RES_SIZE);
 
-    // Strip trailing whitespace. msg_buf + len would point to the trailing null
-    // so subtract one from that to get to the last character.
-    char *p = msg_buf + len - 1;
-    while (p > msg_buf && *p != 0 && *p < ' ') {
-        *p = 0;
-        p--;
-    }
+    // Read response from device
+    uart.readBytesUntil('\n', msg_buf, MAX_RES_SIZE);
 
-    // Why 1 is added here: imagine the string is "X"; this means p == msg_buf but the string
-    // length is 1, not 0.
-    len = p - msg_buf + 1;
+    #ifdef SDI12_SERIAL_DEBUG
+        Serial.printf("Response length: %zu\n", strlen(msg_buf));
+    #endif
 
-#ifdef SDI12_SERIAL_DEBUG
-    Serial.printf("Read line: [%s], len = %lu\n", msg_buf, len);
-#endif
-
-    return len;
+    return strlen(msg_buf);
 }
 
 /**
- * Main function to deal with SDI12 commands and responses.
+ * @brief Main function to deal with SDI12 commands and responses.
  *
  * @details A sensor command is created based on the passed command request. Optionally,
  * the user can pass in a position or newAddress for commands that requires
@@ -184,9 +194,9 @@ ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
 
     pinMode(sdi12_pin, OUTPUT); // Set pin to OUTPUT mode before break and marking
 
-    // Break (12 ms) put signal HIGH
+    // Break (at least 12 ms) put signal HIGH
     digitalWrite(sdi12_pin, HIGH);
-    delay(12);
+    delay(13);
 
     // Marking (at least 8.3 ms) pull signal LOW
     digitalWrite(sdi12_pin, LOW);
@@ -198,7 +208,7 @@ ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
     // Receive message from sensor
     uart.enableTx(false); // Enables RX mode
 
-    Status res = waitForChar();
+    Status res = waitForResponse();
     if (res != SDI12_OK) {
         return res;
     }
@@ -216,8 +226,8 @@ ESP32_SDI12::Status ESP32_SDI12::querySensor(uint8_t address,
 
 
 /**
- * Executes the SDI-12 attention command to see if a sensor is available on a
- * particular address.
+ * @brief Executes the SDI-12 attention command to see if a sensor is available
+ * on a particular address.
  *
  * @warning Not all sensors respond to this command. Use information command
  * if unsure.
@@ -235,10 +245,9 @@ ESP32_SDI12::Status ESP32_SDI12::ackActive(uint8_t address) {
 }
 
 /**
- * Get SDI-12 sensor information.
- *
- * @breif Pass in a reference to a Sensor struct to be populated (when
- * successful).
+ * @brief Get SDI-12 sensor information.
+
+ * Pass in a reference to a Sensor struct to be populated (when successful).
  *
  * @param address SDI-12 sensor address.
  * @param sensor SDI-12 Sensor struct to be populated.
@@ -259,18 +268,18 @@ ESP32_SDI12::Status ESP32_SDI12::sensorInfo(uint8_t address,
     // Parse response held in msg_buf into a SDI12 sensor object
     memcpy(sensor, msg_buf, strlen(msg_buf));
 
-#ifdef SDI12_SERIAL_DEBUG
-    sensor_debug(sensor);
-#endif // SDI12_SERIAL_DEBUG
+    #ifdef SDI12_SERIAL_DEBUG
+        sensor_debug(sensor);
+    #endif // SDI12_SERIAL_DEBUG
 
     return SDI12_OK;
 }
 
 /**
- * Get SDI-12 sensor information.
+ * @breif Get SDI-12 sensor information.
  *
- * @breif Used when the ackActive() command is not supported by the sensor.
- * This method will return SDI12_OK if a device is found but will not populate
+ * Used when the ackActive() command is not supported by the sensor. This
+ * method will return SDI12_OK if a device is found but will not populate
  * a Sensor struct.
  *
  * @param address SDI12 sensor address.
@@ -291,7 +300,7 @@ ESP32_SDI12::Status ESP32_SDI12::sensorInfo(uint8_t address) {
 }
 
 /**
- * Checks if the supplied address is a valid SDI-12 address.
+ * @brief Checks if the supplied address is a valid SDI-12 address.
  *
  * @param address SDI-12 sensor address.
  * @return Status code (ESP32_SDI12::Status).
@@ -301,10 +310,9 @@ ESP32_SDI12::Status ESP32_SDI12::validAddress(uint8_t address) {
 }
 
 /**
- * Obtains an overview of sensors on the SDI-12 bus.
+ * @brief Obtains an overview of sensors on the SDI-12 bus.
  *
- * @breif Populates a Sensors struct with sensors as they are found on
- * the SDI-12 bus.
+ * Populates a Sensors struct with sensors as they are found on the SDI-12 bus.
  *
  * @param sensors Sensors struct to be populated.
  * @return Status code (ESP32_SDI12::Status).
@@ -314,11 +322,20 @@ ESP32_SDI12::Status ESP32_SDI12::sensorsOnBus(Sensors* sensors) {
     sensors->count = 0;
     for (uint8_t address = 0; address <= 9; address++) {
         if (querySensor(address, SDI12_Information) == SDI12_OK) {
+            // Assign sensor to provided struct
             memcpy(&sensors->sensor[sensors->count], msg_buf, strlen(msg_buf));
+
+            // Doing a memcpy above results in the address becoming its decimal
+            // representation e.g. 0 becomes 48. To solve this, the sensors
+            // address is reassigned with its actual address.
+            sensors->sensor[sensors->count].address = address;
+
             #ifdef SDI12_SERIAL_DEBUG
                 sensor_debug(&sensors->sensor[sensors->count]);
             #endif // SDI12_SERIAL_DEBUG
+
             sensors->count++;
+
         } else {
             #ifdef SDI12_SERIAL_DEBUG
                 Serial.printf("No sensor found on address: %d\n", address);
@@ -339,7 +356,7 @@ ESP32_SDI12::Status ESP32_SDI12::sensorsOnBus(Sensors* sensors) {
 }
 
 /**
- * Change a devices SDI-12 address.
+ * @brief Change a devices SDI-12 address.
  *
  * @param address Sensors current SDI-12 address.
  * @param newAddress Proposed SDI-12 sensor address.
@@ -390,9 +407,9 @@ ESP32_SDI12::Status ESP32_SDI12::changeAddress(uint8_t address,
 }
 
 /**
- * Request a SDI-12 sensor to take a measurement.
+ * @brief Request a SDI-12 sensor to take a measurement.
  *
- * @breif If successful the Measure struct will contain all variables needed
+ * If successful the Measure struct will contain all variables needed
  * to submit a subsequent data command (as required by the SDI-12 spec).
  *
  * @note This method does not return sensor data, rather information regarding
@@ -407,14 +424,14 @@ ESP32_SDI12::Status ESP32_SDI12::requestMeasure(uint8_t address,
                                                 Measure* measure) {
     Status res = querySensor(address, SDI12_Measure, 0, 0);
 
-#ifdef SDI12_SERIAL_DEBUG
-    if(res != SDI12_OK){
-        Serial.printf("Error requesting sensor measurement (Error = %d)\n", res);
-        return res;
-    } else {
-        Serial.printf("Successfully queued measurement on address: %d\n", address);
-    }
-#endif // SDI12_SERIAL_DEBUG
+    #ifdef SDI12_SERIAL_DEBUG
+        if(res != SDI12_OK){
+            Serial.printf("Error requesting sensor measurement (Error = %d)\n", res);
+            return res;
+        } else {
+            Serial.printf("Successfully queued measurement on address: %d\n", address);
+        }
+    #endif // SDI12_SERIAL_DEBUG
 
     // Device address that requestMeasure command was issued on
     measure->address = msg_buf[0] - '0';
@@ -434,10 +451,10 @@ ESP32_SDI12::Status ESP32_SDI12::requestMeasure(uint8_t address,
     // seconds. We have at least one sensor that does not always do this so don't assume
     // it's coming, but read and discard it if it does.
     if (measure->delay_time > 0) {
-        waitForChar(measure->delay_time * 1000);
+        waitForResponse(measure->delay_time * 1000);
         if (uart.available() > 0) {
-            // This should be the service request, because no data commands have been
-            // issued yet.
+            // This should be the service request, because no data commands
+            // have been issued yet.
             readUntilCRLF();
         }
     }
@@ -482,18 +499,24 @@ ESP32_SDI12::Status ESP32_SDI12::requestData(uint8_t address,
  * these data as floats to the user. This will handle multiple data commands
  * and only return when all values have been received.
  *
+ * @code
+ * static float values[10];
+ * static uint8_t n_received;
+ * ESP32_SDI12::Status res = sdi12.measure(address, values,
+ *                                          sizeof(values), &n_received);
+ *
  * @param address Sensor SDI-12 address.
  * @param values User supplied buffer to hold returned measurement values.
  * @param max_values Number of values in user supplied buffer.
- * @param num_values The number of values read back from the sensor.
+ * @param num_returned_values The number of values read back from the sensor.
  * @return Status code (ESP32_SDI12::Status).
  */
 ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
                                          float* values,
-                                         uint8_t max_values,
-                                         uint8_t* num_values) {
+                                         size_t max_values,
+                                         uint8_t* num_returned_values = nullptr) {
 
-    Measure measure;
+    Measure measure = {};
 
     // Request a new measurement. This call parses the response to the measure
     // command, delays as necessary and reads the attention sequence. Upon
@@ -527,7 +550,7 @@ ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
         float value;
         // Extract the values from the message buffer and put into user
         // supplied buffer
-        for (uint16_t i = 0; i < max_values; i++) {
+        for (size_t i = 0; i < max_values; i++) {
             value = strtof(msg_ptr, &next_msg_ptr);
             if(msg_ptr == next_msg_ptr){
                 break;
@@ -544,8 +567,10 @@ ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
         position++;
     }
 
-    if (num_values != nullptr) {
-        *num_values = measure.n_values;
+    // Assign the number for returned values to the user provided variable
+    // Skip of num_returned_values is a nullptr
+    if (num_returned_values) {
+        *num_returned_values = measure.n_values;
     }
 
     return res;

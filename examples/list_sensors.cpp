@@ -6,7 +6,7 @@
 ESP32_SDI12 sdi12(SDI12_DATA_PIN);
 ESP32_SDI12::Sensors sensors;
 
-void setup() {
+__attribute__((unused)) void setup() {
     Serial.begin(115200);
 
     // Initialise SDI-12 pin definition
