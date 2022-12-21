@@ -4,7 +4,7 @@
 #include "SoftwareSerial.h"
 
 // Optional define to display SDI-12 serial debug output
-#define SDI12_SERIAL_DEBUG
+//#define SDI12_SERIAL_DEBUG
 
 class ESP32_SDI12 {
 private:
@@ -128,7 +128,7 @@ public:
     Status changeAddress(uint8_t address,
                          uint8_t newAddress);
     Status measure(uint8_t address, float* values, size_t max_values,
-                   uint8_t* num_returned_values);
+                   uint8_t* num_returned_values = nullptr);
 
     // Default SDI-12 pin (should error if uninitialized as
     // `SDI12_INVALID_ADDR`)

@@ -514,7 +514,7 @@ ESP32_SDI12::Status ESP32_SDI12::requestData(uint8_t address,
 ESP32_SDI12::Status ESP32_SDI12::measure(uint8_t address,
                                          float* values,
                                          size_t max_values,
-                                         uint8_t* num_returned_values = nullptr) {
+                                         uint8_t* num_returned_values) {
 
     Measure measure = {};
 

@@ -1,12 +1,12 @@
 #include <Arduino.h>
 #include <esp32-sdi12.h>
 
-#define SDI12_DATA_PIN D0
+#define SDI12_DATA_PIN 0
 
 ESP32_SDI12 sdi12(SDI12_DATA_PIN);
 float values[10];
 
-__attribute__((unused)) void setup() {
+void setup() {
     Serial.begin(115200);
 
     // Initialise SDI-12 pin definition
